@@ -1,0 +1,14 @@
+# Binaries
+/jobqueue
+/bench
+*.exe
+
+# Bench / local artifacts
+bench-results.json
+bench-results*.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

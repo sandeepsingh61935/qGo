@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>qGo · API &amp; data model</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+  <style> body { font-size: 16px; } .wrap { max-width: 42rem; } h1 { font-size: 1.45rem; } </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Reference · pocket card</p>
+      <h1>API &amp; data model</h1>
+    </header>
+
+    <h2>HTTP API</h2>
+    <table>
+      <thead><tr><th>Method</th><th>Path</th><th>Success</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>POST</td><td><code>/enqueue</code></td><td>202</td><td>409 idempotency conflict; 400 bad body</td></tr>
+        <tr><td>GET</td><td><code>/health</code></td><td>200</td><td>503 if Redis depths fail</td></tr>
+        <tr><td>GET</td><td><code>/metrics</code></td><td>200</td><td>Prometheus (API process)</td></tr>
+        <tr><td>GET</td><td><code>:METRICS_PORT/metrics</code></td><td>200</td><td>Worker process metrics</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Enqueue body</h2>
+    <pre>{
+  "type": "email.send",
+  "payload": { "to": "a@b.com" },
+  "priority": 5,
+  "idempotency_key": "optional-client-key"
+}</pre>
+
+    <h2>Job JSON (Redis)</h2>
+    <pre>{
+  "id": "uuid-v7",
+  "type": "email.send",
+  "payload": {},
+  "priority": 0,
+  "idempotency_key": "...",
+  "retry_count": 0,
+  "created_at": "...",
+  "visibility_deadline": "..."   // while processing
+}</pre>
+
+    <h2>Redis keys (queue name = jobs)</h2>
+    <table>
+      <thead><tr><th>Key</th><th>Type</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>jobs</code></td><td>list</td><td>Ready queue (RPUSH / RPOPLPUSH)</td></tr>
+        <tr><td><code>jobs:processing</code></td><td>list</td><td>In-flight claims</td></tr>
+        <tr><td><code>jobs:dlq</code></td><td>list</td><td>Exhausted failures</td></tr>
+        <tr><td><code>idemp:{key}</code></td><td>string</td><td>Enqueue dedup (SETNX, 24h)</td></tr>
+        <tr><td><code>done:{key}</code></td><td>string</td><td>Completed marker (24h)</td></tr>
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

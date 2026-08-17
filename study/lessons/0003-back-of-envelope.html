@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesson 0003 · Back-of-envelope for a job queue</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Lesson 0003 · system design track · qGo</p>
+      <h1>Back-of-envelope: size the queue</h1>
+      <p class="lede">After FR/NFR, interviews often ask for rough math. You do not need precision — you need a clear method and stated assumptions.</p>
+    </header>
+
+    <p class="win"><strong>Win:</strong> Given “100 jobs/s, 100 ms each,” you can estimate worker slots, depth growth, and when lag matters — in under two minutes.</p>
+
+    <h2>Where this sits in the interview</h2>
+    <pre class="flow">FR/NFR  →  [you are here: estimate]  →  API  →  HLD  →  deep dive</pre>
+    <p>
+      Model answers for requirements + this section:
+      <a href="../reference/model-answers-qa.html">Model answers (Q&amp;A)</a>.
+    </p>
+
+    <h2>1. Always start with assumptions</h2>
+    <p>Say them out loud before calculating:</p>
+    <ul>
+      <li><strong>Arrival rate</strong> λ — enqueues per second (peak)</li>
+      <li><strong>Service time</strong> S — average handler duration</li>
+      <li><strong>Payload size</strong> — bytes per job</li>
+      <li><strong>Retention</strong> — how long jobs sit in Redis / DLQ</li>
+    </ul>
+    <div class="card accent">
+      <p>Example we will use for qGo practice:</p>
+      <p>λ = <strong>100 jobs/s</strong> · S = <strong>100 ms</strong> (0.1 s) · size ≈ <strong>1 KB</strong></p>
+    </div>
+
+    <h2>2. Worker capacity (throughput)</h2>
+    <p>One concurrent handler slot completes about <code>1 / S</code> jobs per second.</p>
+    <pre class="flow">S = 0.1 s  →  1 slot ≈ 10 jobs/s
+Need 100 jobs/s steady  →  ~10 slots minimum
+Add headroom (spikes, GC, retries)  →  plan ~15–20 slots
+e.g. 4 worker processes × 4–5 concurrency</pre>
+    <p>
+      <strong>Interview line:</strong> “Throughput is limited by concurrent workers × 1/service_time, not by the enqueue API, as long as Redis keeps up.”
+    </p>
+
+    <h2>3. Queue depth and lag</h2>
+    <p>If workers keep up, depth stays near 0 and lag is tiny.</p>
+    <p>If enqueue exceeds process rate by Δ for time T:</p>
+    <pre class="flow">extra depth ≈ Δ × T
+example: 20 jobs/s deficit for 60 s → ~1,200 jobs
+memory ≈ 1,200 × 1 KB ≈ 1.2 MB (trivial)
+but oldest-job lag ≈ time spent waiting ≈ depth / process_rate</pre>
+    <div class="callout">
+      <strong>Little’s Law (rough):</strong> average number in system ≈ arrival rate × average time in system.
+      Rising <em>lag</em> with steady traffic means workers (or handlers) are the bottleneck — scale workers or optimize work, not the HTTP server.
+    </div>
+
+    <h2>4. What you watch in qGo</h2>
+    <table>
+      <thead><tr><th>Signal</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>queue_depth</code></td><td>How much ready work is waiting</td></tr>
+        <tr><td><code>queue_lag_seconds</code></td><td>Age of oldest ready job — “are we keeping up?”</td></tr>
+        <tr><td><code>processing_depth</code></td><td>In-flight claims (leased work)</td></tr>
+        <tr><td><code>dlq_depth</code></td><td>Poison / exhausted retries</td></tr>
+      </tbody>
+    </table>
+    <p>Portfolio demos may never hit high QPS; still describe these as if on-call.</p>
+
+    <h2>5. Redis memory (order of magnitude)</h2>
+    <pre class="flow">jobs in Redis ≈ depth + processing + DLQ
+1e6 jobs × 1 KB ≈ 1 GB (plus overhead for keys/lists)
+→ DLQ must be drained; unbounded growth is an NFR risk</pre>
+
+    <h2>6. Spoken 60-second template</h2>
+    <div class="card">
+      <p>
+        “Assume 100 jobs/s and 100 ms processing. Each slot does ~10/s, so we need on the order of 10+ concurrent workers with headroom.
+        If we fall behind by 20/s for a minute, depth is ~1.2k jobs — memory is fine, but lag climbs and we’d scale workers.
+        Enqueue bandwidth is ~100 KB/s. Redis memory is depth-driven; we watch depth and oldest-job lag, not just success counts.”
+      </p>
+    </div>
+
+    <h2>Practice</h2>
+
+    <div class="quiz" data-answer="2"
+      data-ok="Yes — 1/0.05 = 20 jobs/s per slot."
+      data-no="Capacity per slot ≈ 1 / service_time.">
+      <div class="quiz-q">1. Service time is 50 ms. About how many jobs/s can one slot finish?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">About five jobs per second for that slot</button>
+        <button type="button" class="opt" data-i="1">About ten jobs per second for that slot</button>
+        <button type="button" class="opt" data-i="2">About twenty jobs per second for that slot</button>
+        <button type="button" class="opt" data-i="3">About fifty jobs per second for that slot</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="1"
+      data-ok="Correct — deficit rate × time ≈ depth growth."
+      data-no="Depth growth ≈ (enqueue − process) × duration.">
+      <div class="quiz-q">2. Enqueue 50/s, process 30/s, for 2 minutes. Approx new depth?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">About six hundred jobs waiting in the main list</button>
+        <button type="button" class="opt" data-i="1">About twenty-four hundred jobs in the main list</button>
+        <button type="button" class="opt" data-i="2">About fifty jobs total, since rate is fifty</button>
+        <button type="button" class="opt" data-i="3">About zero; depth does not grow with deficit</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="0"
+      data-ok="Yes — lag/depth point at worker or handler bottleneck."
+      data-no="A fast enqueue API does not drain a backed-up queue.">
+      <div class="quiz-q">3. Lag rises for 10 minutes; enqueue rate is flat. First lever?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Add workers or speed up handlers; API is not the drain</button>
+        <button type="button" class="opt" data-i="1">Add more API replicas only; ignore worker count now</button>
+        <button type="button" class="opt" data-i="2">Disable health checks so traffic skips the queue path</button>
+        <button type="button" class="opt" data-i="3">Increase payload size so Redis stores fewer jobs</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <h2>Drill (paper, 3 minutes)</h2>
+    <p>New assumptions: <strong>500 jobs/s</strong>, <strong>200 ms</strong> avg handle, <strong>2 KB</strong> payload.</p>
+    <ol>
+      <li>Min concurrent slots for steady state?</li>
+      <li>If you only run 50 slots, how fast does depth grow?</li>
+      <li>Ingress KB/s?</li>
+    </ol>
+    <p>Answers: (1) 500 × 0.2 = <strong>100 slots</strong> · (2) process max 50/0.2… wait: 50 slots × (1/0.2)=250/s → deficit 250/s · (3) 500 × 2 KB = <strong>1 MB/s</strong>.</p>
+
+    <h2>Primary source</h2>
+    <p>
+      Keep using the same interview frameworks for <em>when</em> to estimate:
+      <a href="https://bytebytego.com/courses/system-design-interview/a-framework-for-system-design-interviews">ByteByteGo 4-step framework</a>
+      (estimation lives under understand-scope / early design). Numbers are method practice, not a separate religion.
+    </p>
+
+    <footer class="lesson-foot">
+      <p><strong>Ask me</strong> to grade your 500 jobs/s drill, or run a timed estimation only mock.</p>
+      <div class="nav-links">
+        <a href="../reference/model-answers-qa.html">Model answers Q&amp;A</a>
+        <a href="0002-sd-basics-fr-nfr.html">Prev: FR/NFR</a>
+        <a href="../reference/sd-interview-roadmap.html">Roadmap</a>
+      </div>
+      <p style="margin-top:1rem"><strong>Next (say continue):</strong> Lesson 0004 — API + data model for qGo.</p>
+    </footer>
+  </div>
+  <script src="../assets/quiz.js"></script>
+</body>
+</html>

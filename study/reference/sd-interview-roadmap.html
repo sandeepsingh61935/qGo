@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>qGo · System design interview roadmap</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+  <style> body { font-size: 16px; } .wrap { max-width: 42rem; } h1 { font-size: 1.45rem; } </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Reference · curriculum map</p>
+      <h1>System design interview roadmap (on qGo)</h1>
+      <p class="lede">Same shape as a real interview. Each row is one teaching unit.</p>
+    </header>
+
+    <table>
+      <thead>
+        <tr><th>#</th><th>Phase</th><th>You produce</th><th>Lesson</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>0</td>
+          <td>Mindset &amp; structure</td>
+          <td>4-step arc; don’t jump to boxes</td>
+          <td><a href="../lessons/0002-sd-basics-fr-nfr.html">0002</a></td>
+        </tr>
+        <tr>
+          <td>1</td>
+          <td>Clarify + FR / NFR</td>
+          <td>Prioritized requirements list</td>
+          <td><a href="../lessons/0002-sd-basics-fr-nfr.html">0002</a></td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>Back-of-envelope</td>
+          <td>Order-of-magnitude QPS, storage, workers</td>
+          <td><a href="../lessons/0003-back-of-envelope.html">0003</a></td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>API &amp; data model</td>
+          <td>Endpoints + job JSON + Redis keys</td>
+          <td><a href="../lessons/0004-api-data-model.html">0004</a></td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>High-level design</td>
+          <td>Boxes: client → API → Redis → workers</td>
+          <td><a href="../lessons/0005-high-level-design.html">0005</a></td>
+        </tr>
+        <tr>
+          <td>5a</td>
+          <td>Deep dive: claim / lease / ack</td>
+          <td>Crash story, visibility timeout</td>
+          <td><a href="../lessons/0001-claim-lease-ack.html">0001</a></td>
+        </tr>
+        <tr>
+          <td>5b</td>
+          <td>Deep dive: idempotency &amp; retries/DLQ</td>
+          <td>At-least-once + poison messages</td>
+          <td><a href="../lessons/0006-idempotency-retries-dlq.html">0006</a> ← current</td>
+        </tr>
+        <tr>
+          <td>5c</td>
+          <td>Deep dive: metrics &amp; ops</td>
+          <td>Depth, lag, health</td>
+          <td>0007 (next)</td>
+        </tr>
+        <tr>
+          <td>6</td>
+          <td>Trade-offs + wrap-up</td>
+          <td>What you’d add with more time</td>
+          <td>later</td>
+        </tr>
+        <tr>
+          <td>7</td>
+          <td>Mock interview</td>
+          <td>45-min spoken run</td>
+          <td>capstone</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>4-step process (industry)</h2>
+    <ol>
+      <li><strong>Understand problem &amp; scope</strong> — FR, NFR, out of scope</li>
+      <li><strong>High-level design</strong> — components + data flow, get buy-in</li>
+      <li><strong>Deep dive</strong> — bottlenecks, failure modes, core algorithms</li>
+      <li><strong>Wrap-up</strong> — bottlenecks, improvements, monitoring</li>
+    </ol>
+    <p class="cite">— <a href="https://bytebytego.com/courses/system-design-interview/a-framework-for-system-design-interviews">ByteByteGo / Alex Xu framework</a></p>
+  </div>
+</body>
+</html>

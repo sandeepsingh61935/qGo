@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>qGo · Claim / lease / ack cheatsheet</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+  <style>
+    body { font-size: 16px; }
+    .wrap { max-width: 40rem; }
+    h1 { font-size: 1.45rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Reference · interview pocket card</p>
+      <h1>Claim → lease → ack</h1>
+      <p class="lede">Compress this. Speak it. Do not invent “exactly-once.”</p>
+    </header>
+
+    <h2>Lifecycle</h2>
+    <pre class="flow">main list ──claim──► processing ──ack──► gone
+                 │                    │
+                 │  lease expires     │ fail after N retries
+                 ▼                    ▼
+              requeue               DLQ</pre>
+
+    <h2>qGo map</h2>
+    <table>
+      <thead><tr><th>Idea</th><th>qGo</th><th>SQS cousin</th></tr></thead>
+      <tbody>
+        <tr><td>Claim</td><td><code>RPOPLPUSH</code> main → processing</td><td>ReceiveMessage</td></tr>
+        <tr><td>Lease</td><td><code>visibility_deadline</code> + reaper</td><td>Visibility timeout</td></tr>
+        <tr><td>Ack success</td><td>LREM processing + <code>done:</code></td><td>DeleteMessage</td></tr>
+        <tr><td>Redelivery</td><td>Reaper → main</td><td>Timeout → visible again</td></tr>
+        <tr><td>Poison</td><td>Retry then <code>jobs:dlq</code></td><td>Dead-letter queue</td></tr>
+      </tbody>
+    </table>
+
+    <h2>Guarantee (say this)</h2>
+    <p class="card accent"><strong>At-least-once delivery</strong> + <strong>idempotent handlers</strong>. Not exactly-once end-to-end.</p>
+
+    <h2>Crash mid-job</h2>
+    <ol>
+      <li>Claim already happened → job in <em>processing</em></li>
+      <li>No ack → not deleted</li>
+      <li>Lease expires → reaper requeues</li>
+      <li>Another worker may run it again</li>
+    </ol>
+
+    <p class="cite">Sources: <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html">SQS visibility timeout</a>, <a href="https://redis.io/docs/latest/commands/rpoplpush/">Redis RPOPLPUSH</a></p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesson 0005 · High-level design</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Lesson 0005 · system design track · qGo</p>
+      <h1>High-level design</h1>
+      <p class="lede">Draw <strong>boxes and arrows</strong>, name responsibilities, get buy-in — then deep-dive. Do not open with Lua scripts.</p>
+    </header>
+
+    <p class="win"><strong>Win:</strong> A 60–90s HLD pitch + a clean 3-box diagram (API, Redis, Workers) with two data paths.</p>
+
+    <pre class="flow">FR/NFR → estimate → API/data → [you are here: HLD] → deep dive</pre>
+
+    <h2>1. What “high-level design” means in an interview</h2>
+    <p>
+      Step 2 of the usual 4-step process: propose components and data flow, check the interviewer is on board, <em>then</em> dig in.
+      <span class="cite">— <a href="https://bytebytego.com/courses/system-design-interview/a-framework-for-system-design-interviews">ByteByteGo framework</a></span>
+    </p>
+    <div class="callout">
+      HLD answers: <strong>who talks to whom</strong> and <strong>where state lives</strong>.
+      Deep dive answers: <strong>what happens on crash</strong>, exact algorithms, code-level keys.
+    </div>
+
+    <h2>2. qGo in three boxes</h2>
+    <pre class="flow">        enqueue 202
+Client ─────────────► ┌─────┐         ┌───────┐
+                       │ API │────────►│ Redis │◄──── Workers
+                       └─────┘  lists  └───┬───┘      (claim/handle)
+                         │                 │
+                      health            single
+                      metrics         source of
+                                       truth</pre>
+
+    <table>
+      <thead>
+        <tr><th>Component</th><th>Does</th><th>Does not</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>API</strong> (stateless)</td>
+          <td>Validate request, idempotent enqueue, health, API-side metrics</td>
+          <td>Run business handlers; hold job state in process memory</td>
+        </tr>
+        <tr>
+          <td><strong>Redis</strong></td>
+          <td>Ready list, processing list, DLQ, idemp/done keys</td>
+          <td>Execute job logic</td>
+        </tr>
+        <tr>
+          <td><strong>Workers</strong> (N processes)</td>
+          <td>Claim jobs, run handlers, retries, reaper, worker metrics</td>
+          <td>Accept public enqueue traffic (in this design)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>3. Two paths (draw both arrows)</h2>
+    <h3>Write path (producer)</h3>
+    <pre class="flow">Client → POST /enqueue → API → SETNX idemp → RPUSH jobs → 202</pre>
+    <p>Goal: return quickly; durability of the <em>accept</em> is Redis write success.</p>
+
+    <h3>Process path (consumer)</h3>
+    <pre class="flow">Worker → RPOPLPUSH jobs→processing → handle
+      → success: LREM + done:key
+      → fail: retry later or RPUSH dlq
+      → crash: reaper requeues after lease</pre>
+
+    <h2>4. Why split API and worker?</h2>
+    <ul>
+      <li><strong>Scale independently:</strong> many enqueues, few heavy handlers (or reverse).</li>
+      <li><strong>Failure isolation:</strong> worker deploy/crash does not take down accept path (while Redis is up).</li>
+      <li><strong>Clear roles:</strong> edge is thin; compute is pull-based.</li>
+    </ul>
+    <p>Trade-off: two binaries/processes, metrics are process-local (API vs worker ports).</p>
+
+    <h2>5. Where is the single source of truth?</h2>
+    <div class="card accent">
+      <p><strong>Redis</strong> holds job state. API and workers are replaceable cattle.</p>
+      <p>Implication: Redis availability ≈ queue availability. Say that when discussing NFR “availability.”</p>
+    </div>
+
+    <h2>6. What to postpone to deep dive</h2>
+    <p>On the HLD board, only <em>name</em> these; do not implement yet unless asked:</p>
+    <ul>
+      <li>Visibility lease + reaper (crash safety)</li>
+      <li>Idempotency key details</li>
+      <li>Retry backoff / DLQ payload shape</li>
+      <li>Prometheus metric names</li>
+    </ul>
+    <p>Classic move: “I’ll deep-dive crash safety next if that sounds right.”</p>
+
+    <h2>7. Spoken HLD pitch (~75s)</h2>
+    <div class="card">
+      <p>
+        “Clients call a thin enqueue API. The API validates and writes the job into Redis — ready list plus an optional idempotency key — and returns 202.
+        Stateless API replicas scale with traffic. Workers pull from Redis: claim into a processing list, run a handler by job type, then ack or retry/DLQ.
+        A reaper handles dead workers via visibility timeout. Redis is the system of record; we scale throughput by adding workers, and we watch queue depth and lag.”
+      </p>
+    </div>
+
+    <h2>Practice</h2>
+
+    <div class="quiz" data-answer="2"
+      data-ok="Yes — Redis is shared durable state for the queue."
+      data-no="API/workers are compute; they should not be the source of truth for jobs.">
+      <div class="quiz-q">1. Where does job state primarily live?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Only in API process memory until the HTTP handler returns</button>
+        <button type="button" class="opt" data-i="1">Only in worker RAM after a successful local disk fsync</button>
+        <button type="button" class="opt" data-i="2">In Redis lists and keys shared by API and workers</button>
+        <button type="button" class="opt" data-i="3">In the client browser until the user closes the tab</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="0"
+      data-ok="Correct — independent scaling and role separation."
+      data-no="Combined process is possible but weaker for scale/isolation story.">
+      <div class="quiz-q">2. Best reason to split API and worker processes?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Scale accept path and processing path independently under load</button>
+        <button type="button" class="opt" data-i="1">Because Redis cannot accept writes from more than one host</button>
+        <button type="button" class="opt" data-i="2">Because HTTP cannot return 202 without a second binary</button>
+        <button type="button" class="opt" data-i="3">Because handlers must run inside the same OS process as API</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="3"
+      data-ok="Yes — HLD names paths; deep dive covers lease/reaper mechanics."
+      data-no="HLD should stay at components and flows, not full algorithms.">
+      <div class="quiz-q">3. In HLD, how deep should you go on the reaper?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Paste the full reaper Go loop before drawing any boxes</button>
+        <button type="button" class="opt" data-i="1">Ignore failures entirely until the wrap-up minute only</button>
+        <button type="button" class="opt" data-i="2">Claim reaper provides exactly-once delivery end-to-end</button>
+        <button type="button" class="opt" data-i="3">Name lease + reaper for crash safety; offer a deep dive next</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="1"
+      data-ok="Yes — add workers when processing is the bottleneck."
+      data-no="More API replicas help enqueue RPS, not handler throughput.">
+      <div class="quiz-q">4. Lag climbs; enqueue RPS flat. What do you scale first?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Only API replicas; workers never affect oldest-job lag</button>
+        <button type="button" class="opt" data-i="1">Worker processes / concurrency (or speed up handlers)</button>
+        <button type="button" class="opt" data-i="2">Client retries with larger payloads to reduce message count</button>
+        <button type="button" class="opt" data-i="3">Disable Redis so API returns faster without persistence</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <h2>Whiteboard drill</h2>
+    <ol>
+      <li>Draw Client, API, Redis, Workers.</li>
+      <li>Label write path and process path.</li>
+      <li>Say the 75s pitch once without notes.</li>
+      <li>Check <a href="../reference/hld-qgo.html">HLD card</a> and
+        <a href="../reference/model-answers-qa.html#hld">Q&amp;A</a>.</li>
+    </ol>
+
+    <h2>Primary source</h2>
+    <p>
+      <a href="https://bytebytego.com/courses/system-design-interview/a-framework-for-system-design-interviews">ByteByteGo: high-level design step</a>
+      — propose design and get buy-in before deep dive.
+    </p>
+
+    <footer class="lesson-foot">
+      <p><strong>Ask me</strong> for a mock “draw HLD only” (5 min) or continue into deep dives.</p>
+      <div class="nav-links">
+        <a href="../reference/hld-qgo.html">HLD pocket card</a>
+        <a href="../reference/model-answers-qa.html">Model answers Q&amp;A</a>
+        <a href="0004-api-data-model.html">Prev: API/data</a>
+        <a href="0001-claim-lease-ack.html">Deep dive next: claim/lease/ack</a>
+        <a href="../reference/sd-interview-roadmap.html">Roadmap</a>
+      </div>
+      <p style="margin-top:1rem">
+        <strong>Next (say continue):</strong> Deep dive track starts with claim / lease / ack
+        (<a href="0001-claim-lease-ack.html">lesson 0001</a>), then idempotency + retries/DLQ.
+      </p>
+    </footer>
+  </div>
+  <script src="../assets/quiz.js"></script>
+</body>
+</html>

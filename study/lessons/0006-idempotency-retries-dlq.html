@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lesson 0006 · Idempotency, retries, DLQ</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Lesson 0006 · deep dive · qGo</p>
+      <h1>Idempotency, retries &amp; DLQ</h1>
+      <p class="lede">At-least-once is incomplete without a story for <strong>duplicates</strong> and <strong>poison messages</strong>. This lesson is that story.</p>
+    </header>
+
+    <p class="win"><strong>Win:</strong> Separate “client double-click” from “worker redelivery,” and walk retry → DLQ without claiming exactly-once.</p>
+
+    <pre class="flow">HLD → claim/lease/ack → [you are here] → metrics/ops → trade-offs</pre>
+
+    <h2>1. Two kinds of “twice”</h2>
+    <table>
+      <thead>
+        <tr><th>Scenario</th><th>What went wrong</th><th>qGo control</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Producer retry</strong></td>
+          <td>Client sends the same logical enqueue twice (timeout, double-click)</td>
+          <td><code>idempotency_key</code> + <code>SETNX idemp:{key}</code> → second call <strong>409</strong></td>
+        </tr>
+        <tr>
+          <td><strong>Consumer redelivery</strong></td>
+          <td>Lease expired / reaper / crash after side effect started</td>
+          <td>Handler must be <strong>safe to run again</strong>; <code>done:{key}</code> after success reduces re-runs</td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="callout">
+      Interviewers love when you un-merge these. Saying only “we have idempotency keys” without saying <em>where</em> is weak.
+    </div>
+
+    <h2>2. Enqueue-time idempotency</h2>
+    <pre class="flow">POST /enqueue { idempotency_key: "pay-42", ... }
+  → SETNX idemp:pay-42 = job_id  (TTL 24h)
+  → if already set → 409, no second RPUSH
+  → else RPUSH job JSON to main list</pre>
+    <ul>
+      <li>If client omits key, server uses job <code>id</code> (unique each time → no dedup).</li>
+      <li>Dedup window is TTL-bound (24h) — say that if asked “forever?”</li>
+    </ul>
+    <p class="cite">Related industry idea: client-supplied idempotency keys on payment/APIs; queue systems use similar dedup tokens.</p>
+
+    <h2>3. Completion fence (<code>done:</code>)</h2>
+    <p>
+      After successful handle, qGo sets <code>done:{key}</code>.
+      If a reaper requeues a job that already completed (race / double path), dequeue can skip re-running work marked done.
+    </p>
+    <div class="card accent">
+      <p><strong>Honest limit:</strong> If the handler sent an email, then crashed <em>before</em> ack, redelivery may send again.
+      Keys reduce some races; they do not make side effects magically exactly-once. Handler design (upsert, unique constraints, provider idempotency) still matters.</p>
+    </div>
+
+    <h2>4. Retries (transient handler failure)</h2>
+    <p>On handler error (or panic recovered as error):</p>
+    <ol>
+      <li>Ack remove from processing (don’t leave a zombie lease for that attempt).</li>
+      <li><code>retry_count++</code></li>
+      <li>If <code>retry_count &gt;= 3</code> → <strong>DLQ</strong></li>
+      <li>Else schedule requeue with exponential backoff + jitter, cap 60s</li>
+    </ol>
+    <pre class="flow">delay ≈ min(2^retry_count seconds + jitter, 60s)
+example: 2s, 4s, 8s… (with jitter), never above 60s</pre>
+    <p><strong>Why jitter?</strong> Avoid thundering herd when many jobs fail together (e.g. dependency blip).</p>
+
+    <h2>5. Dead-letter queue (poison / exhausted)</h2>
+    <p>
+      DLQ is a separate list <code>jobs:dlq</code> of records:
+      <code>{ job, error, failed_at }</code>.
+    </p>
+    <ul>
+      <li><strong>Purpose:</strong> stop infinite retry; preserve evidence for humans/tools.</li>
+      <li><strong>Unknown job type:</strong> permanent misconfiguration → DLQ immediately (no retry).</li>
+      <li><strong>Ops:</strong> watch <code>dlq_depth</code>; draining/replay is a product choice (v1: inspect / manual requeue).</li>
+    </ul>
+    <p class="cite">— <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html">AWS SQS dead-letter queues</a></p>
+
+    <h2>6. How this ties to delivery guarantee</h2>
+    <div class="card">
+      <p><strong>Claim/lease</strong> → we don’t lose messages on crash (at-least-once possible).</p>
+      <p><strong>Idempotency</strong> → we survive duplicates (client + consumer).</p>
+      <p><strong>Retries + DLQ</strong> → we bound pain for bad messages (don’t block the queue forever).</p>
+      <p>Together: practical production-shaped story without lying about exactly-once.</p>
+    </div>
+
+    <h2>7. Spoken answers</h2>
+    <div class="card accent">
+      <p><strong>Idempotency (30s):</strong>
+        “Two layers. At enqueue, optional client key with SETNX returns 409 on replay so we don’t double-insert.
+        After success we mark done. Redelivery can still happen if we crash mid-handler; the handler must be safe to run twice — keys help, they don’t replace careful side effects.”</p>
+      <p><strong>Retry/DLQ (30s):</strong>
+        “Handler failures increment retry_count, exponential backoff with jitter, max three attempts then DLQ with error metadata.
+        Unknown types go straight to DLQ. We alert on dlq_depth.”</p>
+    </div>
+
+    <h2>Practice</h2>
+
+    <div class="quiz" data-answer="1"
+      data-ok="Yes — enqueue SETNX blocks a second ready job for that key."
+      data-no="Redelivery is the lease/reaper path; 409 is producer dedup.">
+      <div class="quiz-q">1. Client POSTs the same idempotency_key twice quickly. Result?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Both return 202 and two jobs sit on the ready list</button>
+        <button type="button" class="opt" data-i="1">First 202; second 409; only one job enqueued for that key</button>
+        <button type="button" class="opt" data-i="2">Both return 500 because Redis forbids duplicate keys ever</button>
+        <button type="button" class="opt" data-i="3">Second call blocks forever until the first job finishes</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="2"
+      data-ok="Correct — side effects before ack imply possible duplicate work."
+      data-no="Crash before ack is the classic at-least-once duplicate case.">
+      <div class="quiz-q">2. Email sent, then worker dies before ack. What can happen?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Job is gone forever; user never gets a second email risk</button>
+        <button type="button" class="opt" data-i="1">Exactly-once is guaranteed because Redis lists are atomic</button>
+        <button type="button" class="opt" data-i="2">Reaper may requeue; handler can run again (duplicate email)</button>
+        <button type="button" class="opt" data-i="3">DLQ receives it immediately without any retry attempts</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="0"
+      data-ok="Yes — exhausted retries go to DLQ with context."
+      data-no="Infinite retry is what DLQ is designed to stop.">
+      <div class="quiz-q">3. Handler fails three times (retry_count reaches max). Next step?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Push a DLQ record with job + error; stop automatic retries</button>
+        <button type="button" class="opt" data-i="1">Delete the job silently so metrics stay green forever</button>
+        <button type="button" class="opt" data-i="2">Return 409 to the original HTTP client on the API path</button>
+        <button type="button" class="opt" data-i="3">Promote the job to a higher priority lane automatically</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <div class="quiz" data-answer="3"
+      data-ok="Yes — unknown type is permanent; retrying won’t help."
+      data-no="Transient network errors retry; bad type is configuration.">
+      <div class="quiz-q">4. Why send unknown job type straight to DLQ?</div>
+      <div class="quiz-opts">
+        <button type="button" class="opt" data-i="0">Because Redis cannot store JSON for unknown type names</button>
+        <button type="button" class="opt" data-i="1">Because unknown types always mean the producer used GET</button>
+        <button type="button" class="opt" data-i="2">Because visibility timeout does not apply to typed handlers</button>
+        <button type="button" class="opt" data-i="3">Because retries won’t create a handler that was never registered</button>
+      </div>
+      <div class="feedback" hidden></div>
+    </div>
+
+    <h2>Primary source</h2>
+    <p>
+      <a href="https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html"><strong>AWS SQS dead-letter queues</strong></a>
+      — why poison messages leave the main queue.
+      Pair with at-least-once docs from earlier lessons for the full delivery story.
+    </p>
+
+    <footer class="lesson-foot">
+      <p><strong>Ask me</strong> to grill you: “payment charged twice — whose bug?” or continue to metrics/ops.</p>
+      <div class="nav-links">
+        <a href="../reference/idempotency-retries-dlq.html">Pocket card</a>
+        <a href="../reference/model-answers-qa.html#idempotency">Model answers Q&amp;A</a>
+        <a href="0001-claim-lease-ack.html">Prev: claim/lease/ack</a>
+        <a href="../reference/sd-interview-roadmap.html">Roadmap</a>
+      </div>
+      <p style="margin-top:1rem"><strong>Next (say continue):</strong> Lesson 0007 — metrics, lag, and ops questions.</p>
+    </footer>
+  </div>
+  <script src="../assets/quiz.js"></script>
+</body>
+</html>

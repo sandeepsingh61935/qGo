@@ -87,6 +87,43 @@ curl -X POST http://localhost:8080/enqueue \
 | `job_duration_seconds` | Histogram | Worker | Processing latency |
 | `queue_lag_seconds` | Gauge | Worker | Oldest job age |
 
+## Benchmarks / performance report
+
+Requires a running Redis (`REDIS_ADDR`, default `localhost:6379`).
+
+### Go microbenchmarks (ns/op, allocs)
+
+```bash
+go test ./internal/queue/ -bench=. -benchmem -count=1
+```
+
+| Benchmark | Notes |
+|-----------|--------|
+| `BenchmarkEnqueue` | `SETNX` + `RPUSH` path |
+| `BenchmarkDequeue` | `RPOPLPUSH` + visibility stamp |
+| `BenchmarkRoundTrip` | enqueue → dequeue → complete |
+| `BenchmarkEnqueueParallel` | concurrent producers |
+| `BenchmarkJobMarshal` / `Unmarshal` | pure JSON CPU cost |
+
+### Load report (throughput + latency percentiles)
+
+```bash
+go run ./cmd/bench -jobs 5000 -producers 8 -consumers 8 -json bench-results.json
+go run ./scripts/bench-chart.go   # → assets/bench-throughput.svg
+```
+
+![qGo lab throughput by scenario — bars are ops/s; legend explains each path; E2E callout contrasts queue sojourn vs process latency](assets/bench-throughput.svg)
+
+| scenario | ops/s | p50 ms | p95 ms | p99 ms |
+|----------|------:|-------:|-------:|-------:|
+| enqueue_sequential | 7.9k | 0.12 | 0.15 | 0.22 |
+| enqueue_parallel | 21.3k | 0.36 | 0.44 | 0.56 |
+| dequeue_parallel | 14.4k | 0.56 | 0.66 | 0.73 |
+| e2e sojourn (create→done) | 6.6k | 126 | 693 | 745 |
+| e2e process only (dequeue→done) | — | 1.01 | 1.85 | 2.02 |
+
+Single-host lab (Redis 7, 8 CPUs, 5k jobs). E2E sojourn includes queue wait under producer burst; process = dequeue→complete (no-op handler). Not multi-AZ SLOs.
+
 ## Design decisions & trade-offs
 
 1. **Redis lists + atomic move vs Postgres `SKIP LOCKED`** — Chose Redis for sub-ms latency and simple ops. Trade-off: no ACID durability without replicas; at-least-once requires idempotent handlers.
@@ -115,8 +152,19 @@ curl -X POST http://localhost:8080/enqueue \
 ## Resume line
 
 > **qGo** — Go, Redis  
-> Built a production-style async job queue with durable dequeue (processing list + visibility timeout reaper), exponential backoff retries, dead-letter handling, and idempotency keys. Exposed Prometheus metrics (queue depth, lag, throughput) for operational visibility.
+> Built a production-style async job queue with durable dequeue (processing list + visibility timeout reaper), exponential backoff retries, dead-letter handling, and idempotency keys. Exposed Prometheus metrics (queue depth, lag, throughput) and a load harness reporting ops/s + p50/p95/p99 latency for enqueue, dequeue, and end-to-end paths.
+
+## Tests
+
+```bash
+# needs Redis (skips if unavailable)
+go test ./internal/queue/ -count=1
+```
+
+## Study notes
+
+Interview prep materials live under [`study/`](study/) (not part of the runtime).
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

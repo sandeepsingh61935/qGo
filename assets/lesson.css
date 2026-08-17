@@ -1,0 +1,251 @@
+/* Shared lesson stylesheet — Tufte-inspired, print-friendly */
+:root {
+  --ink: #1a1a1a;
+  --muted: #5c5c5c;
+  --line: #e6e2d8;
+  --paper: #faf8f4;
+  --card: #ffffff;
+  --accent: #0b3d4a;
+  --accent-soft: #e6f1f4;
+  --good: #1b5e3b;
+  --bad: #8b1e1e;
+  --warn: #7a5b00;
+  --mono: "IBM Plex Mono", "SF Mono", ui-monospace, monospace;
+  --sans: "Source Serif 4", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --ui: "IBM Plex Sans", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html { font-size: 18px; }
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--sans);
+  line-height: 1.55;
+}
+
+.wrap {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.25rem 4rem;
+}
+
+header.meta {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 1rem;
+  margin-bottom: 1.75rem;
+}
+
+.eyebrow {
+  font-family: var(--ui);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.4rem;
+}
+
+h1 {
+  font-size: 1.85rem;
+  line-height: 1.2;
+  margin: 0 0 0.5rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.lede {
+  color: var(--muted);
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+h2 {
+  font-size: 1.15rem;
+  margin: 2rem 0 0.65rem;
+  font-family: var(--ui);
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 1rem;
+  margin: 1.4rem 0 0.4rem;
+  font-family: var(--ui);
+}
+
+p, li { margin: 0.55rem 0; }
+
+ul, ol { padding-left: 1.25rem; }
+
+a { color: var(--accent); }
+
+code, .mono {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+pre {
+  background: #111;
+  color: #f3f3f3;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem 1.1rem;
+  margin: 1rem 0;
+}
+
+.card.accent {
+  background: var(--accent-soft);
+  border-color: #c5dde4;
+}
+
+.callout {
+  border-left: 3px solid var(--accent);
+  padding: 0.2rem 0 0.2rem 0.9rem;
+  margin: 1rem 0;
+  color: var(--ink);
+}
+
+.cite {
+  font-family: var(--ui);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.cite a { color: var(--muted); }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+  margin: 0.8rem 0 1.2rem;
+}
+
+th, td {
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  padding: 0.45rem 0.35rem;
+  vertical-align: top;
+}
+
+th {
+  font-family: var(--ui);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.quiz {
+  margin: 1.25rem 0;
+}
+
+.quiz-q {
+  font-family: var(--ui);
+  font-weight: 600;
+  margin-bottom: 0.65rem;
+}
+
+.quiz-opts {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.quiz button.opt {
+  text-align: left;
+  font: inherit;
+  font-family: var(--ui);
+  font-size: 0.95rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.quiz button.opt:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.quiz button.opt.correct {
+  border-color: var(--good);
+  background: #e8f6ee;
+}
+
+.quiz button.opt.wrong {
+  border-color: var(--bad);
+  background: #fdecec;
+}
+
+.quiz button.opt:disabled { cursor: default; }
+
+.feedback {
+  margin-top: 0.65rem;
+  font-family: var(--ui);
+  font-size: 0.92rem;
+  min-height: 1.4em;
+}
+
+.feedback.ok { color: var(--good); }
+.feedback.no { color: var(--bad); }
+
+.flow {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem;
+  white-space: pre;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+footer.lesson-foot {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  font-family: var(--ui);
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.nav-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  margin-top: 0.75rem;
+  font-family: var(--ui);
+  font-size: 0.9rem;
+}
+
+.win {
+  font-family: var(--ui);
+  font-size: 0.9rem;
+  background: #111;
+  color: #f5f5f5;
+  padding: 0.85rem 1rem;
+  border-radius: 6px;
+  margin: 1rem 0 1.5rem;
+}
+
+.win strong { color: #9fd4e3; }
+
+@media print {
+  body { background: white; }
+  .quiz button.opt { border: 1px solid #999; }
+  .win { background: #eee; color: #000; }
+}

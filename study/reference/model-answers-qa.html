@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>qGo · Model answers (Q/A)</title>
+  <link rel="stylesheet" href="../assets/lesson.css" />
+  <style>
+    body { font-size: 16.5px; }
+    .wrap { max-width: 44rem; }
+    h1 { font-size: 1.5rem; }
+    .qa { margin: 1.1rem 0; padding: 0.9rem 1rem; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+    .qa .q { font-family: var(--ui); font-weight: 650; margin: 0 0 0.5rem; }
+    .qa .a { margin: 0; }
+    .qa .a p { margin: 0.4rem 0; }
+    .tag { font-family: var(--ui); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+    .section-note { color: var(--muted); font-family: var(--ui); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="meta">
+      <p class="eyebrow">Reference · interview rehearsal</p>
+      <h1>qGo model answers (Q&amp;A)</h1>
+      <p class="lede">Speak these out loud. Short first, then expand if the interviewer digs. Out-of-scope intentionally omitted per your preference.</p>
+    </header>
+
+    <p class="section-note">Updated as the track progresses. Sections: Requirements → Estimation → API → HLD → Deep dives → Trade-offs.</p>
+
+    <!-- ========== REQUIREMENTS ========== -->
+    <h2 id="requirements">1. Requirements</h2>
+
+    <div class="qa" id="q-what-building">
+      <p class="tag">Clarify</p>
+      <p class="q">Q: What are we building?</p>
+      <div class="a">
+        <p><strong>A:</strong> A lightweight async job queue: producers enqueue work; workers process it off the request path. Think mini SQS/Sidekiq for learning and portfolio depth.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-fr">
+      <p class="tag">FR</p>
+      <p class="q">Q: What are the functional requirements?</p>
+      <div class="a">
+        <p><strong>A (model):</strong></p>
+        <ol>
+          <li><strong>Producer can enqueue</strong> a job with type + payload (optional priority and idempotency key).</li>
+          <li><strong>Consumer/worker can process</strong> jobs asynchronously by type (handler per type).</li>
+          <li><strong>Failed jobs are retried</strong>, then moved to a dead-letter queue after max attempts.</li>
+          <li><strong>Operators can check health</strong> (queue / processing / DLQ depths, lag signal).</li>
+          <li><strong>Operators can scrape metrics</strong> (enqueued, processed, failed, depth, lag, duration).</li>
+        </ol>
+        <p><em>Your version mapped:</em> (1) producer send ≈ enqueue · (2) consumer async process · (3) retry — good core; add health/metrics for ops signal.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-nfr">
+      <p class="tag">NFR</p>
+      <p class="q">Q: What are the non-functional requirements?</p>
+      <div class="a">
+        <p><strong>A (model — full sentences, not labels):</strong></p>
+        <ol>
+          <li><strong>Latency shape:</strong> Enqueue stays fast; heavy work is async (not on the HTTP request).</li>
+          <li><strong>Durability (worker fault):</strong> A single worker crash must not silently drop a claimed job.</li>
+          <li><strong>Delivery:</strong> At-least-once delivery; clients/handlers use idempotency to handle duplicates.</li>
+          <li><strong>Scalability:</strong> Throughput scales by adding worker processes against shared Redis.</li>
+          <li><strong>Availability:</strong> API is useful when Redis is reachable; health reflects that dependency.</li>
+          <li><strong>Observability:</strong> Depth + lag answer “are workers keeping up?” not only success counters.</li>
+        </ol>
+        <p><em>Your labels:</em> availability, scalability, reliability, durability, throughput/latency — correct themes. Interview answer must expand each into a sentence like above. “Reliability” → prefer durability + delivery + retries/DLQ.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-fr-vs-nfr">
+      <p class="tag">FR vs NFR</p>
+      <p class="q">Q: Is “use Redis” a requirement?</p>
+      <div class="a">
+        <p><strong>A:</strong> No. That is a <strong>design choice</strong>. Requirements are needs (enqueue, crash safety). Redis is how we meet latency/simplicity NFRs; we justify it in high-level design.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-fr-vs-retry">
+      <p class="tag">FR vs NFR</p>
+      <p class="q">Q: Is retry FR or NFR?</p>
+      <div class="a">
+        <p><strong>A:</strong> Capability “jobs can be retried / DLQ’d” is <strong>FR</strong>. How aggressive (backoff, max 3, jitter) is <strong>design</strong> serving reliability NFRs.</p>
+      </div>
+    </div>
+
+    <!-- ========== ESTIMATION ========== -->
+    <h2 id="estimation">2. Back-of-envelope</h2>
+
+    <div class="qa" id="q-why-estimate">
+      <p class="tag">Estimation</p>
+      <p class="q">Q: Why do back-of-envelope at all for a small queue?</p>
+      <div class="a">
+        <p><strong>A:</strong> To show you can size workers and storage, and to force trade-offs (one Redis box vs many workers). Even rough orders of magnitude beat silence.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-sample-numbers">
+      <p class="tag">Estimation</p>
+      <p class="q">Q: Walk me through numbers for qGo (example assumptions).</p>
+      <div class="a">
+        <p><strong>A (example — state assumptions first):</strong></p>
+        <ul>
+          <li>Assume <strong>100 enqueues/s</strong> peak, avg job payload <strong>~1 KB</strong>, avg process time <strong>100 ms</strong>.</li>
+          <li><strong>Worker concurrency:</strong> 1 worker core ≈ 10 jobs/s at 100 ms. Need ~10 concurrent slots → e.g. 3 processes × 4 goroutines, headroom for spikes.</li>
+          <li><strong>Ingress bandwidth:</strong> 100 × 1 KB ≈ 100 KB/s (trivial).</li>
+          <li><strong>Queue depth:</strong> if process rate &lt; enqueue rate by 20/s for 60s → depth grows ~1200 jobs (~1.2 MB) — memory fine; lag is the real alert.</li>
+          <li><strong>Redis memory:</strong> depth × size + processing + keys; even 1M jobs × 1 KB ≈ 1 GB order — plan retention / DLQ drain.</li>
+        </ul>
+        <p>Portfolio scale may be tiny; still narrate the <em>method</em>.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-little-law">
+      <p class="tag">Estimation</p>
+      <p class="q">Q: How do you relate lag, depth, and throughput?</p>
+      <div class="a">
+        <p><strong>A:</strong> Roughly Little’s Law: <em>depth ≈ arrival rate × time-in-system</em>. If lag (oldest job age) rises while enqueue is steady, workers are the bottleneck — scale workers or speed handlers, not the API.</p>
+      </div>
+    </div>
+
+    <!-- ========== API ========== -->
+    <h2 id="api">3. API &amp; data model</h2>
+    <p class="section-note">Lesson: <a href="../lessons/0004-api-data-model.html">0004</a> · Card: <a href="api-data-model.html">api-data-model.html</a></p>
+
+    <div class="qa" id="q-api">
+      <p class="tag">API</p>
+      <p class="q">Q: What APIs do you expose?</p>
+      <div class="a">
+        <p><strong>A:</strong></p>
+        <ul>
+          <li><code>POST /enqueue</code> → <strong>202</strong> <code>{ job_id, status: "queued" }</code></li>
+          <li><code>GET /health</code> → depths + lag + status (503 if Redis bad)</li>
+          <li><code>GET /metrics</code> on API · worker metrics on <code>METRICS_PORT</code> (default 9091)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="qa" id="q-202">
+      <p class="tag">API</p>
+      <p class="q">Q: Why 202 Accepted instead of 200?</p>
+      <div class="a">
+        <p><strong>A:</strong> 202 means “accepted for async processing.” 200 would imply the work is already done. Enqueue only persists the job; workers run later.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-409">
+      <p class="tag">API</p>
+      <p class="q">Q: When do you return 409?</p>
+      <div class="a">
+        <p><strong>A:</strong> When the client’s <code>idempotency_key</code> already exists (<code>SETNX</code> fails). Same logical request must not create a second job while the key is live.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-job-shape">
+      <p class="tag">Data</p>
+      <p class="q">Q: What does a job look like?</p>
+      <div class="a">
+        <p><strong>A:</strong> JSON on Redis lists: <code>id</code> (UUIDv7), <code>type</code>, <code>payload</code>, <code>priority</code>, <code>idempotency_key</code>, <code>retry_count</code>, <code>created_at</code>, and <code>visibility_deadline</code> while in-flight.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-redis-keys">
+      <p class="tag">Data</p>
+      <p class="q">Q: What do you store in Redis?</p>
+      <div class="a">
+        <p><strong>A:</strong></p>
+        <ul>
+          <li><code>jobs</code> — ready list</li>
+          <li><code>jobs:processing</code> — in-flight leases</li>
+          <li><code>jobs:dlq</code> — exhausted failures</li>
+          <li><code>idemp:{key}</code> — enqueue dedup</li>
+          <li><code>done:{key}</code> — completion marker</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="qa" id="q-no-status-api">
+      <p class="tag">Data</p>
+      <p class="q">Q: Why no GET /jobs/:id?</p>
+      <div class="a">
+        <p><strong>A:</strong> MVP keeps a single write path and list-based storage. Status lookup needs a secondary index (e.g. <code>job:{id}</code> hash). Easy extension if product needs polling.</p>
+      </div>
+    </div>
+
+    <!-- ========== HLD ========== -->
+    <h2 id="hld">4. High-level design</h2>
+    <p class="section-note">Lesson: <a href="../lessons/0005-high-level-design.html">0005</a> · Card: <a href="hld-qgo.html">hld-qgo.html</a></p>
+
+    <div class="qa" id="q-hld">
+      <p class="tag">HLD</p>
+      <p class="q">Q: Draw the high-level design.</p>
+      <div class="a">
+        <p><strong>A:</strong> Three boxes: <strong>API</strong> (stateless enqueue/health/metrics) → <strong>Redis</strong> (ready, processing, DLQ, idemp/done) ← <strong>Workers</strong> (claim, handlers, reaper). Client only talks to API for writes.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-hld-paths">
+      <p class="tag">HLD</p>
+      <p class="q">Q: What are the two main paths?</p>
+      <div class="a">
+        <p><strong>A:</strong></p>
+        <ul>
+          <li><strong>Write:</strong> Client → API → Redis RPUSH → 202</li>
+          <li><strong>Process:</strong> Worker claim (main→processing) → handler → ack / retry / DLQ</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="qa" id="q-hld-split">
+      <p class="tag">HLD</p>
+      <p class="q">Q: Why separate API and workers?</p>
+      <div class="a">
+        <p><strong>A:</strong> Scale accept vs processing independently; isolate worker crashes/deploys from enqueue; keep edge thin and pull-based compute.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-hld-sot">
+      <p class="tag">HLD</p>
+      <p class="q">Q: What is the source of truth?</p>
+      <div class="a">
+        <p><strong>A:</strong> Redis. API and workers are disposable. Availability of the queue tracks Redis availability.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-hld-pitch">
+      <p class="tag">HLD</p>
+      <p class="q">Q: 75-second architecture pitch?</p>
+      <div class="a">
+        <p><strong>A:</strong> “Thin API enqueues to Redis and returns 202. Workers pull, claim into processing, run handlers, ack or retry/DLQ. Reaper covers dead workers via visibility timeout. Scale workers for lag; Redis is system of record; watch depth and lag.”</p>
+      </div>
+    </div>
+
+    <!-- ========== DEEP: CLAIM / LEASE / ACK ========== -->
+    <h2 id="deep">5. Deep dive — claim / lease / ack</h2>
+    <p class="section-note">Lesson: <a href="../lessons/0001-claim-lease-ack.html">0001</a> · Card: <a href="claim-lease-ack.html">claim-lease-ack.html</a></p>
+
+    <div class="qa" id="q-cla-words">
+      <p class="tag">Vocabulary</p>
+      <p class="q">Q: What do claim, lease, and ack mean?</p>
+      <div class="a">
+        <p><strong>A:</strong></p>
+        <ul>
+          <li><strong>Claim</strong> — atomically take work: <code>RPOPLPUSH</code> main → processing</li>
+          <li><strong>Lease</strong> — temporary ownership via <code>visibility_deadline</code>; if you don’t finish, system assumes failure</li>
+          <li><strong>Ack</strong> — success path: remove from processing + set <code>done:{key}</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="qa" id="q-why-not-lpop">
+      <p class="tag">Claim</p>
+      <p class="q">Q: Why not just LPOP from the main list?</p>
+      <div class="a">
+        <p><strong>A:</strong> <code>LPOP</code> deletes the only copy. Worker dies → job is gone. <code>RPOPLPUSH</code> (Redis reliable-queue pattern) keeps a copy on the processing list until ack.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-crash">
+      <p class="tag">Failure</p>
+      <p class="q">Q: Worker dies mid-job. Do we lose the message?</p>
+      <div class="a">
+        <p><strong>A:</strong> No silent loss. Job already sits in <strong>processing</strong>. No ack → lease expires → <strong>reaper</strong> moves it back to main → another worker may run it. That is <strong>at-least-once</strong>.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-crash-timeline">
+      <p class="tag">Failure</p>
+      <p class="q">Q: Walk the timeline of a crash (30s visibility).</p>
+      <div class="a">
+        <p><strong>A:</strong> t=0 claim + deadline=t+30 → t=5 kill-9 → job stuck in processing → t≈30 reaper requeues → t≈30+ another worker processes again.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-lease-too-short">
+      <p class="tag">Lease</p>
+      <p class="q">Q: Visibility timeout shorter than job runtime?</p>
+      <div class="a">
+        <p><strong>A:</strong> Reaper requeues while the first worker may still be running → <strong>duplicate concurrent execution</strong>. Timeout must exceed p99 handler time (or heartbeat/extend lease).</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-guarantee">
+      <p class="tag">Delivery</p>
+      <p class="q">Q: Exactly-once?</p>
+      <div class="a">
+        <p><strong>A:</strong> No. We provide <strong>at-least-once delivery</strong> + <strong>idempotent handlers</strong> / keys. Exactly-once end-to-end needs much stronger coordination (out of this MVP’s claim).</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-reaper">
+      <p class="tag">Reaper</p>
+      <p class="q">Q: What is the reaper?</p>
+      <div class="a">
+        <p><strong>A:</strong> Not a dependency/library. A <strong>background loop in the worker process</strong> (~every 10s) that finds processing jobs past <code>visibility_deadline</code> and requeues them to main.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-60s-crash">
+      <p class="tag">Pitch</p>
+      <p class="q">Q: 60s answer — “How do you not lose jobs when a worker dies?”</p>
+      <div class="a">
+        <p><strong>A:</strong> “We claim with RPOPLPUSH into a processing list so a crash can’t silently drop the job. That claim has a visibility lease. If the worker dies mid-handler, a reaper requeues after the deadline. Success is an explicit ack. Delivery is at-least-once; handlers must be idempotent.”</p>
+      </div>
+    </div>
+
+    <!-- ========== IDEMPOTENCY / RETRIES / DLQ ========== -->
+    <h2 id="idempotency">5b. Deep dive — idempotency, retries, DLQ</h2>
+    <p class="section-note">Lesson: <a href="../lessons/0006-idempotency-retries-dlq.html">0006</a> · Card: <a href="idempotency-retries-dlq.html">idempotency-retries-dlq.html</a></p>
+
+    <div class="qa" id="q-two-twice">
+      <p class="tag">Idempotency</p>
+      <p class="q">Q: What are the two kinds of “running twice”?</p>
+      <div class="a">
+        <p><strong>A:</strong> (1) <strong>Producer double-submit</strong> — same logical enqueue twice → <code>SETNX idemp:</code> / <strong>409</strong>.
+        (2) <strong>Consumer redelivery</strong> — lease/reaper after partial work → handler must be safe to re-run; <code>done:</code> after success.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-idemp-enqueue">
+      <p class="tag">Idempotency</p>
+      <p class="q">Q: How does enqueue idempotency work?</p>
+      <div class="a">
+        <p><strong>A:</strong> Client sends <code>idempotency_key</code>. We <code>SETNX idemp:{key}</code> with TTL (24h). Fail → 409, no second job. Missing key → use job id (no cross-request dedup).</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-idemp-limit">
+      <p class="tag">Idempotency</p>
+      <p class="q">Q: Does that give exactly-once email send?</p>
+      <div class="a">
+        <p><strong>A:</strong> No. Crash after side effect, before ack, can still redeliver. Keys help; handler/provider idempotency is still required for safe side effects.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-retry-policy">
+      <p class="tag">Retries</p>
+      <p class="q">Q: What’s your retry policy?</p>
+      <div class="a">
+        <p><strong>A:</strong> On handler error: increment <code>retry_count</code>; exponential backoff + jitter, cap 60s; after 3 failures → DLQ. Unknown type → DLQ immediately.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-dlq">
+      <p class="tag">DLQ</p>
+      <p class="q">Q: Why a dead-letter queue?</p>
+      <div class="a">
+        <p><strong>A:</strong> Poison messages must not retry forever and block attention. DLQ keeps <code>{job, error, failed_at}</code> for inspection; alert on <code>dlq_depth</code>.</p>
+      </div>
+    </div>
+
+    <div class="qa" id="q-idemp-pitch">
+      <p class="tag">Pitch</p>
+      <p class="q">Q: 30s idempotency + 30s retry/DLQ?</p>
+      <div class="a">
+        <p><strong>A:</strong> See lesson spoken answers — two layers of idempotency; max-3 backoff then DLQ; unknown type no retry.</p>
+      </div>
+    </div>
+
+    <!-- ========== TRADEOFF ========== -->
+    <h2 id="tradeoffs">6. Trade-offs (preview)</h2>
+
+    <div class="qa" id="q-redis">
+      <p class="tag">Trade-off</p>
+      <p class="q">Q: Why Redis lists instead of Postgres SKIP LOCKED?</p>
+      <div class="a">
+        <p><strong>A:</strong> Redis: simple, low latency, clear primitives for interview story. Trade-off: durability depends on Redis HA/AOF; no free ACID with your business DB. Postgres: stronger durability/transactions, typically lower throughput and more ops weight.</p>
+      </div>
+    </div>
+
+    <footer class="lesson-foot">
+      <p>Pair with lessons under <code>lessons/</code>. Ask the teacher for a mock Q&amp;A drill anytime.</p>
+      <div class="nav-links">
+        <a href="sd-interview-roadmap.html">Roadmap</a>
+        <a href="fr-nfr-qgo.html">FR/NFR card</a>
+        <a href="../lessons/0003-back-of-envelope.html">Lesson 0003</a>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>
