@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    command: ["-mode", "api"]
+    ports:
+      - "8080:8080"
+    environment:
+      - REDIS_ADDR=redis:6379
+      - QUEUE_NAME=jobs
+      - VISIBILITY_TIMEOUT=30
+      - PORT=8080
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["-mode", "worker"]
+    environment:
+      - REDIS_ADDR=redis:6379
+      - QUEUE_NAME=jobs
+      - VISIBILITY_TIMEOUT=30
+      - WORKER_CONCURRENCY=4
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      replicas: 2
