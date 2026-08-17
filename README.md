@@ -19,6 +19,18 @@ Lightweight async job queue in **Go** with a **Redis** backend. Built for learni
                     └─────────────┘     └─────────────┘
 ```
 
+### Flow: enqueue → claim → crash → reaper redelivery
+
+Sequence for the happy path plus worker crash recovery (visibility timeout → at-least-once redelivery → another worker completes).
+
+![qGo architecture sequence: client enqueue, Redis claim/lease, worker crash, reaper requeue, successful complete](assets/architecture-flow.png)
+
+1. **Enqueue** — `SETNX idemp:{key}` then `RPUSH` main list; `202` with `job_id`
+2. **Claim** — worker `RPOPLPUSH` main → processing, stamps `visibility_deadline`
+3. **Crash** — no `Complete`/`Ack`; job stays in processing until deadline
+4. **Reap** — periodic scan requeues expired processing entries to main
+5. **Redeliver** — another worker claims and finishes; `done:{key}` marks completion
+
 ## Quick start
 
 ```bash
