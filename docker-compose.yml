@@ -28,11 +28,14 @@ services:
   worker:
     build: .
     command: ["-mode", "worker"]
+    ports:
+      - "9091:9091"
     environment:
       - REDIS_ADDR=redis:6379
       - QUEUE_NAME=jobs
       - VISIBILITY_TIMEOUT=30
       - WORKER_CONCURRENCY=4
+      - METRICS_PORT=9091
     depends_on:
       redis:
         condition: service_healthy

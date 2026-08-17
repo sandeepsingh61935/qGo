@@ -5,6 +5,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// Queue label is fixed for v1 (single queue).
+const DefaultQueue = "default"
+
 var (
 	JobsEnqueuedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "jobs_enqueued_total",
@@ -30,6 +33,11 @@ var (
 		Name: "jobs_reaped_total",
 		Help: "Total number of stale jobs reaped by visibility timeout",
 	})
+
+	JobsSkippedIdempotentTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "jobs_skipped_idempotent_total",
+		Help: "Jobs skipped because idempotency key already completed",
+	}, []string{"type", "queue"})
 
 	QueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "queue_depth",
@@ -58,7 +66,5 @@ var (
 	})
 )
 
-func Init(queueName string) {
-	// Labels are set per-metric at emission site
-	_ = queueName // placeholder for future per-queue labeling
-}
+// Init is reserved for multi-queue labeling; v1 uses DefaultQueue.
+func Init(_ string) {}
