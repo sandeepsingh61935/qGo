@@ -161,10 +161,6 @@ Single-host lab (Redis 7, 8 CPUs, 5k jobs). E2E sojourn includes queue wait unde
 go test ./internal/queue/ -count=1
 ```
 
-## Study notes
-
-Interview prep materials live under [`study/`](study/) (not part of the runtime).
-
 ## License
 
 MIT — see [LICENSE](LICENSE).

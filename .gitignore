@@ -7,6 +7,11 @@
 bench-results.json
 bench-results*.json
 
+# Local interview prep (not published)
+study/
+assets/lesson.css
+assets/quiz.js
+
 # IDE / OS
 .idea/
 .vscode/
